@@ -21,6 +21,7 @@ import {
   deleteEpisode
 } from './db.js';
 import { generateRssFeed } from './rss.js';
+import { analyzeAudio, simpleTrimAudio, getAudioMetadata } from './audioAnalyzer.js';
 
 dotenv.config();
 
@@ -329,6 +330,125 @@ app.delete('/api/episodes/:id', async (req, res) => {
     res.json({ message: 'Episode deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// --- AUDIO EDITING ROUTES ---
+
+// Analyze audio for silence segments (auto-detect intro/outro songs)
+app.get('/api/episodes/:id/analyze', async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+    if (!episode.audioPath || !fs.existsSync(episode.audioPath)) {
+      return res.status(404).json({ error: 'Audio file not found' });
+    }
+
+    const analysis = await analyzeAudio(episode.audioPath);
+    res.json(analysis);
+  } catch (error) {
+    res.status(500).json({ error: 'Audio analysis failed: ' + error.message });
+  }
+});
+
+// Get audio metadata (duration, bitrate, codec, etc.)
+app.get('/api/episodes/:id/metadata', async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+    if (!episode.audioPath || !fs.existsSync(episode.audioPath)) {
+      return res.status(404).json({ error: 'Audio file not found' });
+    }
+
+    const metadata = await getAudioMetadata(episode.audioPath);
+    res.json(metadata);
+  } catch (error) {
+    res.status(500).json({ error: 'Metadata extraction failed: ' + error.message });
+  }
+});
+
+// Trim audio: remove specified segments (intro/outro songs)
+app.post('/api/episodes/:id/trim', async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+    if (!episode.audioPath || !fs.existsSync(episode.audioPath)) {
+      return res.status(404).json({ error: 'Audio file not found' });
+    }
+
+    const { startTime, endTime } = req.body;
+    if (startTime === undefined || endTime === undefined) {
+      return res.status(400).json({ error: 'startTime and endTime are required' });
+    }
+
+    // Create trimmed output file with timestamp to avoid conflicts
+    const ext = path.extname(episode.audioPath);
+    const basename = path.basename(episode.audioPath, ext);
+    const trimmedFilename = `${basename}-trimmed-${Date.now()}${ext}`;
+    const trimmedPath = path.join(audioUploadsDir, trimmedFilename);
+
+    // Perform trim
+    await simpleTrimAudio(episode.audioPath, startTime, endTime, trimmedPath);
+
+    // Backup original and replace with trimmed version
+    const backupPath = path.join(audioUploadsDir, `${basename}-backup-${Date.now()}${ext}`);
+    fs.renameSync(episode.audioPath, backupPath);
+    fs.renameSync(trimmedPath, episode.audioPath);
+
+    // Update episode metadata
+    const newSize = fs.statSync(episode.audioPath).size;
+    const newDuration = endTime - startTime;
+
+    await updateEpisode(episode.id, {
+      ...episode,
+      audioSize: newSize,
+      audioDuration: Math.round(newDuration)
+    });
+
+    res.json({
+      message: 'Audio trimmed successfully',
+      backup: backupPath,
+      newSize,
+      newDuration: Math.round(newDuration),
+      trimmed: { startTime, endTime }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Audio trimming failed: ' + error.message });
+  }
+});
+
+// Undo trim: restore from backup
+app.post('/api/episodes/:id/restore', async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+
+    const ext = path.extname(episode.audioPath);
+    const basename = path.basename(episode.audioPath, ext);
+    const dir = path.dirname(episode.audioPath);
+    
+    // Find most recent backup
+    const files = fs.readdirSync(dir);
+    const backups = files
+      .filter(f => f.includes(basename) && f.includes('-backup-'))
+      .sort()
+      .reverse();
+
+    if (backups.length === 0) {
+      return res.status(404).json({ error: 'No backup found' });
+    }
+
+    const backupPath = path.join(dir, backups[0]);
+    const currentPath = episode.audioPath;
+
+    // Restore backup
+    fs.renameSync(backupPath, currentPath + '.tmp');
+    fs.renameSync(currentPath, backupPath);
+    fs.renameSync(currentPath + '.tmp', currentPath);
+
+    res.json({ message: 'Audio restored from backup', backup: backupPath });
+  } catch (error) {
+    res.status(500).json({ error: 'Restore failed: ' + error.message });
   }
 });
 
