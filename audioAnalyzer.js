@@ -5,6 +5,11 @@ import path from 'path';
 /**
  * Analyze audio file for silence segments and volume patterns
  * Returns detected segments where intros/outros (songs) likely exist
+ * 
+ * Silence Detection Strategy:
+ * - Look for silence of 2+ seconds (real intro/outro songs)
+ * - Use -40dB threshold to catch quiet background music
+ * - Filter out tiny pauses (< 1.5 seconds) that are just speech breaks
  */
 export async function analyzeAudio(audioPath) {
   return new Promise((resolve, reject) => {
@@ -14,7 +19,7 @@ export async function analyzeAudio(audioPath) {
 
       const ffmpegProcess = spawn('ffmpeg', [
         '-i', audioPath,
-        '-af', 'silencedetect=n=-40dB:d=0.5',
+        '-af', 'silencedetect=n=-40dB:d=2',  // 2 seconds minimum (was 0.5)
         '-f', 'null',
         '-'
       ], {
@@ -44,8 +49,8 @@ export async function analyzeAudio(audioPath) {
             currentSilence.end = time;
             currentSilence.duration = time - currentSilence.start;
             
-            // Only include meaningful silences (> 0.5 seconds)
-            if (currentSilence.duration > 0.5) {
+            // Only include meaningful silences (2+ seconds = likely songs)
+            if (currentSilence.duration >= 2.0) {
               silenceSegments.push(currentSilence);
             }
             currentSilence = null;
@@ -64,7 +69,8 @@ export async function analyzeAudio(audioPath) {
         resolve({
           silenceSegments,
           totalDuration,
-          detectionMethod: 'ffmpeg_silencedetect'
+          detectionMethod: 'ffmpeg_silencedetect',
+          detectionNote: 'Segments 2+ seconds of silence (typical intro/outro songs)'
         });
       });
 
