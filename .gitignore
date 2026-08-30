@@ -1,0 +1,14 @@
+node_modules/
+node_modules/*
+
+# Ignore SQLite databases
+*.sqlite
+*.sqlite3
+*.db
+*.db3
+
+# Ignore SQLite journal and temporary files
+*.sqlite-journal
+*.sqlite3-journal
+*.db-shm
+*.db-wal

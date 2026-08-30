@@ -1,0 +1,165 @@
+╔═══════════════════════════════════════════════════════════════╗
+║              MANUAL TRIMMING - QUICK CHEATSHEET               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+⚡ 5-STEP WORKFLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1: Open Audio Editor
+  → Episode list → Click ✨ Edit Audio
+
+STEP 2: Play & Listen
+  → Click ▶️ Play
+  → Listen for when intro music ends (speech begins)
+  → Listen for when speech ends (outro begins)
+
+STEP 3: Identify Exact Times
+  → Note the time when intro ends
+  → Note the time when outro starts
+  → Example: Intro ends at 0:30, Outro starts at 45:25
+
+STEP 4: Set Manual Trim Boundaries
+  
+  Keep from (seconds):  [30.0]
+  Keep until (seconds): [2725.0]
+  
+  (0:30 = 30 seconds, 45:25 = 2725 seconds)
+
+STEP 5: Apply Trim
+  → Click "Apply Trim"
+  → Wait for ✅ "Trimmed! New duration: MM:SS"
+  → Done! Backup created automatically
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🕐 TIME CONVERSIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Quick formula: MM:SS = (MM × 60) + SS
+
+Examples:
+  0:30  = 30 seconds
+  1:00  = 60 seconds
+  5:00  = 300 seconds
+  10:00 = 600 seconds
+  30:00 = 1800 seconds
+  45:25 = 2725 seconds (45 × 60 + 25)
+  60:00 = 3600 seconds (1 hour)
+
+Or just paste the time into a calculator!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 HOW TO USE THE WAVEFORM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Visual Guide:
+  
+  Dense purple bars    = Audio with sound (speech)
+  Thin/missing bars    = Quiet audio (silence)
+  Very thin            = Intro/outro songs often
+  
+  ┌──────────────────────────────────────────┐
+  │ [Thin] [DENSE DENSE] [Thin]              │  Waveform
+  │  intro     content     outro              │
+  └──────────────────────────────────────────┘
+   ^                              ^
+   Start keeping here (intro ends)
+                                  Stop keeping here (outro starts)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💾 BACKUP & RESTORE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every trim creates automatic backup:
+  ✅ Original file saved
+  ✅ Trimmed version replaces episode audio
+  ✅ Can restore anytime with 1 click
+
+To restore:
+  → Open Audio Editor for the episode
+  → Scroll to "Restore Backup"
+  → Click "Restore Backup"
+  → Done! Back to original
+
+⚠️  Only latest backup kept. Delete after restore.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+�� COMMON SCENARIOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SCENARIO 1: Simple intro + content + outro
+  Total: 60 minutes
+  Intro: 30 seconds (0:00 - 0:30)
+  Content: 59 minutes 30 seconds
+  Outro: 30 seconds
+  
+  Settings:
+    Keep from: 30
+    Keep until: 3570
+
+SCENARIO 2: Longer intro + content + outro  
+  Total: 45 minutes
+  Intro: 25 seconds (0:00 - 0:25)
+  Content: 44 minutes 40 seconds
+  Outro: 15 seconds
+  
+  Settings:
+    Keep from: 25.0
+    Keep until: 2680.0
+
+SCENARIO 3: Very short intro (< 2 seconds)
+  Total: 30 minutes
+  Intro: 5 seconds
+  Content: 29 minutes 50 seconds
+  Outro: 5 seconds
+  
+  Settings:
+    Keep from: 5.0
+    Keep until: 1795.0
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔍 DEBUGGING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Audio won't play?
+  → Press F12 to open DevTools
+  → Go to Console tab
+  → Look for [AudioEditor] messages
+  → Share error messages with developer
+
+Trim failed?
+  → Verify: Keep from < Keep until
+  → Verify: Both times within total duration
+  → Check file permissions on server
+  → Check `/tmp/backend.log` for errors
+
+Times confusing?
+  → Use the MM:SS display below each field
+  → Or calculator: MM × 60 = total seconds
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 HELP & DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For more details, read:
+  • MANUAL_TRIMMING_GUIDE.md
+  • MANUAL_TRIMMING_QUICKREF.md
+  • STATUS_REPORT.md
+  • TROUBLESHOOTING_FIXES.md
+
+Quick tips:
+  • Test on 1 episode first
+  • Use Restore Backup if unsure
+  • Don't refresh during trim (takes 2-5 min)
+  • Visual waveform helps identify times
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 You're ready! Try your first trim now!
+
+Questions? Check the documentation or browser console (F12)
