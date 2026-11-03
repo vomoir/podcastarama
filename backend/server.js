@@ -21,7 +21,7 @@ import {
   deleteEpisode
 } from './db.js';
 import { generateRssFeed } from './rss.js';
-import { analyzeAudio, simpleTrimAudio, trimAudio, getAudioMetadata } from './audioAnalyzer.js';
+import { analyzeAudio, trimAudio, getAudioMetadata } from './audioAnalyzer.js';
 
 dotenv.config();
 
@@ -402,11 +402,7 @@ app.post('/api/episodes/:id/trim', async (req, res) => {
     const originalDuration = (await getAudioMetadata(episode.audioPath)).duration;
     const removedDuration = validSegments.reduce((total, seg) => total + (seg.end - seg.start), 0);
 
-    if (validSegments.length === 1) {
-      await simpleTrimAudio(episode.audioPath, validSegments[0].start, validSegments[0].end, trimmedPath);
-    } else {
-      await trimAudio(episode.audioPath, validSegments, trimmedPath, 'remove');
-    }
+    await trimAudio(episode.audioPath, validSegments, trimmedPath, 'remove');
 
     const backupPath = path.join(audioUploadsDir, `${basename}-backup-${Date.now()}${ext}`);
     fs.renameSync(episode.audioPath, backupPath);

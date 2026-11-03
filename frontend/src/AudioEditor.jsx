@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
-import { Play, Pause, Square, Trash2, RotateCcw, Save, Loader, Info, Music } from 'lucide-react';
+import { Play, Pause, Square, Trash2, RotateCcw, Save, Loader, Info, Music, ZoomIn, ZoomOut } from 'lucide-react';
 
 const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
   ? 'http://localhost:5000' 
   : window.location.origin;
+
+const MIN_ZOOM_LEVEL = 5;
+const DEFAULT_ZOOM_LEVEL = 80;
+const MAX_ZOOM_LEVEL = 260;
 
 export default function AudioEditor({ episode, onClose, onSave }) {
   const [isLoading, setIsLoading] = useState(false);
@@ -19,6 +23,8 @@ export default function AudioEditor({ episode, onClose, onSave }) {
   const [manualStart, setManualStart] = useState(0);
   const [manualEnd, setManualEnd] = useState(0);
   const [isTrimming, setIsTrimming] = useState(false);
+  const [isWaveformLoading, setIsWaveformLoading] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM_LEVEL);
 
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -27,6 +33,7 @@ export default function AudioEditor({ episode, onClose, onSave }) {
 
   const waveformRef = useRef(null);
   const wavesurferRef = useRef(null);
+  const regionsPluginRef = useRef(null);
 
   // Playback queue for selected regions
   const playQueueRef = useRef([]);
@@ -34,12 +41,24 @@ export default function AudioEditor({ episode, onClose, onSave }) {
   const playingSelectionRef = useRef(false);
   const audioprocessHandlerRef = useRef(null);
 
+  const buildAudioUrl = (cacheBust = false) => {
+    const baseUrl = episode.audioUrl.startsWith('http')
+      ? episode.audioUrl
+      : `${API_BASE}${episode.audioUrl}`;
+
+    if (!cacheBust) return baseUrl;
+
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}t=${Date.now()}`;
+  };
+
   const createWaveSurfer = (audioUrl) => {
     if (!waveformRef.current) return null;
 
     const regionsPlugin = RegionsPlugin.create({
       color: 'rgba(168, 85, 247, 0.22)'
     });
+    regionsPluginRef.current = regionsPlugin;
 
     const ws = WaveSurfer.create({
       container: waveformRef.current,
@@ -52,13 +71,28 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       height: 100,
       normalize: true,
       backend: 'WebAudio',
+      minPxPerSec: zoomLevel,
       plugins: [regionsPlugin]
+    });
+
+    regionsPlugin.on('region-created', (region) => {
+      pushRegionSelection(region);
+      console.log('[AudioEditor] Region selected:', region.start, region.end);
+    });
+
+    regionsPlugin.on('region-clicked', (region) => {
+      pushRegionSelection(region);
+    });
+
+    regionsPlugin.on('region-updated', (region) => {
+      updateManualTrimFromRegion(region);
     });
 
     ws.on('ready', () => {
       console.log('[AudioEditor] Audio loaded, duration:', ws.getDuration());
       setDuration(ws.getDuration());
       setCurrentTime(0);
+      setIsWaveformLoading(false);
 
       const dragSelection = regionsPlugin.enableDragSelection({
         color: 'rgba(168, 85, 247, 0.22)'
@@ -67,10 +101,13 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       if (typeof dragSelection === 'function') {
         ws.__dragSelectionCleanup = dragSelection;
       }
+
+      ws.zoom(zoomLevel);
     });
 
     ws.on('error', (error) => {
       console.error('[AudioEditor] Audio loading error:', error);
+      setIsWaveformLoading(false);
       setError(`Failed to load audio: ${error?.message || 'Unknown error'}`);
     });
 
@@ -81,16 +118,8 @@ export default function AudioEditor({ episode, onClose, onSave }) {
     ws.on('play', () => setIsPlaying(true));
     ws.on('pause', () => setIsPlaying(false));
 
-    ws.on('region-created', (region) => {
-      pushRegionSelection(region);
-      console.log('[AudioEditor] Region selected:', region.start, region.end);
-    });
-
-    ws.on('region-click', (region) => {
-      pushRegionSelection(region);
-    });
-
     console.log('[AudioEditor] Loading audio from:', audioUrl);
+    setIsWaveformLoading(true);
     ws.load(audioUrl);
     wavesurferRef.current = ws;
     return ws;
@@ -100,9 +129,7 @@ export default function AudioEditor({ episode, onClose, onSave }) {
   useEffect(() => {
     if (!waveformRef.current) return;
 
-    const audioUrl = episode.audioUrl.startsWith('http')
-      ? episode.audioUrl
-      : `${API_BASE}${episode.audioUrl}`;
+    const audioUrl = buildAudioUrl(false);
 
     if (wavesurferRef.current) {
       try {
@@ -223,6 +250,17 @@ export default function AudioEditor({ episode, onClose, onSave }) {
     setIsPlaying(true);
   };
 
+  const playbackStartIndexForCursor = (segments) => {
+    const cursor = Number.isFinite(Number(currentTime)) ? Number(currentTime) : 0;
+
+    const firstAfterCursor = segments.findIndex(seg => seg.start >= cursor);
+    if (firstAfterCursor >= 0) {
+      return firstAfterCursor;
+    }
+
+    return 0;
+  };
+
   const togglePlayback = () => {
     const segments = normalizeSegments(selectedSegments || []);
 
@@ -232,11 +270,15 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       return;
     }
 
-    // If user has selected regions, play them sequentially
+    // If the cursor sits outside any selected region, treat the cursor as
+    // the desired preview origin and start from the first selected region
+    // whose start is at or after that cursor. This lets playback begin from
+    // the current waveform point instead of forcing the earliest region.
     if (segments.length > 0) {
+      const startIndex = playbackStartIndexForCursor(segments);
       playQueueRef.current = segments;
-      playIndexRef.current = 0;
-      playSegmentAtIndex(0);
+      playIndexRef.current = startIndex;
+      playSegmentAtIndex(startIndex);
       return;
     }
 
@@ -246,10 +288,37 @@ export default function AudioEditor({ episode, onClose, onSave }) {
     }
   };
 
-  const clearSelection = () => {
-    if (wavesurferRef.current && wavesurferRef.current.regions) {
-      wavesurferRef.current.regions.clear();
+  const goToStart = () => {
+    const ws = wavesurferRef.current;
+    if (!ws) return;
+
+    try {
+      ws.setTime(0);
+      setCurrentTime(0);
+    } catch (e) {
+      console.error('[AudioEditor] Go to start failed:', e);
     }
+  };
+
+  const goToEnd = () => {
+    const ws = wavesurferRef.current;
+    if (!ws) return;
+
+    const end = Number(ws.getDuration?.() || duration || 0);
+    try {
+      ws.setTime(end);
+      setCurrentTime(end);
+    } catch (e) {
+      console.error('[AudioEditor] Go to end failed:', e);
+    }
+  };
+
+  const clearSelection = () => {
+    const plugin = regionsPluginRef.current;
+    if (plugin && typeof plugin.clearRegions === 'function') {
+      plugin.clearRegions();
+    }
+
     setSelectedSegments([]);
     setManualStart(0);
     setManualEnd(0);
@@ -259,16 +328,45 @@ export default function AudioEditor({ episode, onClose, onSave }) {
   const removeSelectedSegment = (segmentToRemove) => {
     const remaining = normalizeSegments(selectedSegments).filter(seg => !(Math.abs(seg.start - segmentToRemove.start) < 0.01 && Math.abs(seg.end - segmentToRemove.end) < 0.01));
 
-    if (wavesurferRef.current && wavesurferRef.current.regions) {
-      const regions = wavesurferRef.current.regions.list;
-      Object.values(regions).forEach((region) => {
-        if (Math.abs(region.start - segmentToRemove.start) < 0.01 && Math.abs(region.end - segmentToRemove.end) < 0.01) {
-          region.remove();
-        }
-      });
+    const plugin = regionsPluginRef.current;
+    if (plugin && typeof plugin.getRegions === 'function') {
+      const regions = plugin.getRegions();
+      regions
+        .filter(region => Math.abs(region.start - segmentToRemove.start) < 0.01 && Math.abs(region.end - segmentToRemove.end) < 0.01)
+        .forEach((region) => {
+          try { region.remove(); } catch {}
+        });
     }
 
     setSelectedSegments(remaining);
+  };
+
+  const zoomWaveform = (direction) => {
+    const ws = wavesurferRef.current;
+    if (!ws) return;
+
+    const next = direction === 'in'
+      ? Math.min(zoomLevel + 40, MAX_ZOOM_LEVEL)
+      : Math.max(zoomLevel - 40, MIN_ZOOM_LEVEL);
+
+    setZoomLevel(next);
+    ws.zoom(next);
+  };
+
+  const showFullWaveform = () => {
+    const ws = wavesurferRef.current;
+    if (!ws) return;
+
+    setZoomLevel(MIN_ZOOM_LEVEL);
+    ws.zoom(MIN_ZOOM_LEVEL);
+  };
+
+  const resetZoom = () => {
+    const ws = wavesurferRef.current;
+    if (!ws) return;
+
+    setZoomLevel(DEFAULT_ZOOM_LEVEL);
+    ws.zoom(DEFAULT_ZOOM_LEVEL);
   };
 
   const confirmTrimSelectedRegions = () => {
@@ -348,6 +446,22 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       .sort((a, b) => a.start - b.start);
   };
 
+  const updateManualTrimFromRegion = (region) => {
+    if (!region || !Number.isFinite(Number(region.start)) || !Number.isFinite(Number(region.end))) {
+      return;
+    }
+
+    const start = Number(region.start);
+    const end = Number(region.end);
+    if (end <= start) {
+      return;
+    }
+
+    setManualStart(start);
+    setManualEnd(end);
+    setTrimMode('manual');
+  };
+
   const pushRegionSelection = (region) => {
     const segment = { start: region.start, end: region.end };
     setSelectedSegments(prev => {
@@ -356,15 +470,42 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       if (exists) return normalized;
       return [...normalized, segment];
     });
-    setManualStart(segment.start);
-    setManualEnd(segment.end);
-    setTrimMode('manual');
+    updateManualTrimFromRegion(region);
   };
 
   const handleTrimClick = (segment) => {
     setTrimMode('auto');
     setManualStart(segment.start);
     setManualEnd(segment.end);
+  };
+
+  const refreshWaveformAfterTrim = () => {
+    const oldWs = wavesurferRef.current;
+    if (oldWs) {
+      try {
+        if (oldWs.__dragSelectionCleanup) oldWs.__dragSelectionCleanup();
+      } catch {}
+      try {
+        oldWs.stop();
+      } catch {}
+      try {
+        oldWs.destroy();
+      } catch {}
+    }
+
+    wavesurferRef.current = null;
+    regionsPluginRef.current = null;
+    clearSelection();
+    setIsWaveformLoading(true);
+
+    const refreshUrl = buildAudioUrl(true);
+    try {
+      const freshWs = createWaveSurfer(refreshUrl);
+      wavesurferRef.current = freshWs;
+    } catch (e) {
+      console.error('[AudioEditor] Refresh load failed:', e);
+      setIsWaveformLoading(false);
+    }
   };
 
   const performTrim = async () => {
@@ -393,7 +534,7 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       const result = await res.json();
       alert(`✅ Trimmed! New duration: ${formatTime(result.newDuration)}`);
       onSave && onSave();
-      onClose();
+      refreshWaveformAfterTrim();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -429,7 +570,7 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       const result = await res.json();
       alert(`✅ Trimmed ${segments.length} selected region(s)! New duration: ${formatTime(result.newDuration)}`);
       onSave && onSave();
-      onClose();
+      refreshWaveformAfterTrim();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -477,14 +618,36 @@ export default function AudioEditor({ episode, onClose, onSave }) {
         <h3 style={{ marginTop: 0, fontSize: '14px', textTransform: 'uppercase', opacity: 0.7 }}>
           Waveform Visualization
         </h3>
-        <div 
-          ref={waveformRef} 
-          style={{
-            background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.1) 0%, transparent 100%)',
-            borderRadius: '4px',
-            marginBottom: '10px'
-          }}
-        />
+        <div style={{ position: 'relative' }}>
+          <div 
+            ref={waveformRef} 
+            style={{
+              background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.1) 0%, transparent 100%)',
+              borderRadius: '4px',
+              marginBottom: '10px'
+            }}
+          />
+          {isWaveformLoading && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column',
+              gap: '8px',
+              background: 'rgba(22, 22, 36, 0.65)',
+              color: 'var(--accent-primary)',
+              borderRadius: '4px',
+              fontSize: '12px',
+              fontWeight: 700,
+              backdropFilter: 'blur(1px)'
+            }}>
+              <Loader size={22} className="spin" />
+              <span>Loading waveform...</span>
+            </div>
+          )}
+        </div>
         
         {/* Playback Controls */}
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
@@ -505,6 +668,38 @@ export default function AudioEditor({ episode, onClose, onSave }) {
             >
               {isPlaying ? <Pause size={16} /> : <Play size={16} />}
               {isPlaying ? 'Playing' : 'Play'}
+            </button>
+
+            <button
+              onClick={goToStart}
+              title="Go to start"
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'inherit',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 700
+              }}
+            >
+              Go to Start
+            </button>
+
+            <button
+              onClick={goToEnd}
+              title="Go to end"
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'inherit',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 700
+              }}
+            >
+              Go to End
             </button>
 
             <button
@@ -541,6 +736,71 @@ export default function AudioEditor({ episode, onClose, onSave }) {
             >
               Clear Selection
             </button>
+
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <button
+                onClick={() => zoomWaveform('out')}
+                title="Zoom out"
+                style={{
+                  padding: '8px 12px',
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'inherit',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <ZoomOut size={14} />
+              </button>
+              <button
+                onClick={() => zoomWaveform('in')}
+                title="Zoom in"
+                style={{
+                  padding: '8px 12px',
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'inherit',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <ZoomIn size={14} />
+              </button>
+              <button
+                onClick={showFullWaveform}
+                title="Show entire waveform"
+                style={{
+                  padding: '8px 12px',
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'inherit',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                Full Waveform
+              </button>
+              <button
+                onClick={resetZoom}
+                title="Reset zoom"
+                style={{
+                  padding: '8px 12px',
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'inherit',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                Reset Zoom
+              </button>
+            </div>
           </div>
           <div style={{ fontSize: '12px', opacity: 0.7 }}>
             {formatTime(currentTime)} / {formatTime(duration)}

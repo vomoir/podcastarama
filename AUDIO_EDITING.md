@@ -265,6 +265,36 @@ Episode: "Podcast #5" (Duration: 30:00)
 
 ---
 
+## ✅ Implemented Editor Workflow and Backend Semantics Fixes
+
+The current editor has been aligned around the following workflow model:
+
+- **Waveform loading** shows a spinner while the `WaveSurfer` instance and audio source are preparing.
+- **Region selection and the manual keep fields** are treated as separate states. A selected waveform region can be surfaced in the selected segments list as a **remove** area, while the Manual Trim fields continue to represent the **keep** range shown by `Keep from` and `Keep to`.
+- **Clear Selection** removes the visible region overlays and resets the internal selected segments list.
+- **Delete from the selected segments panel** removes the underlying region from the active Regions plugin rather than only clearing the UI list item.
+- **Trim Selected Region** and **Apply Trim** now stay in the editor after a successful request instead of jumping back to the parent episode page.
+- **Selected-region trimming is always removal semantics.** Whether one or many regions are selected, the route normalizes the submitted intervals into a `segments` removal request and uses the shared `trimAudio(..., 'remove')` flow rather than branching to a one-range keep slice path.
+- **Zoom controls** and the implemented horizontal waveform scrollbar help place edit boundaries more precisely.
+
+### Request Semantics
+
+The backend trimming endpoint now accepts both a keep-range request and a selected-region removal request:
+
+```json
+{ "startTime": 30.0, "endTime": 120.0 }
+```
+
+or
+
+```json
+{ "segments": [{ "start": 30.0, "end": 45.0 }, { "start": 180.0, "end": 210.0 }] }
+```
+
+The selected-region route uses the remove-mode segment path so the highlighted region(s) are removed consistently instead of being preserved by mistake.
+
+---
+
 ## 🛠️ Technical Details
 
 ### API Endpoints Used
