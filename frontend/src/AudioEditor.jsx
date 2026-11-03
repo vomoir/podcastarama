@@ -250,6 +250,17 @@ export default function AudioEditor({ episode, onClose, onSave }) {
     setIsPlaying(true);
   };
 
+  const playbackStartIndexForCursor = (segments) => {
+    const cursor = Number.isFinite(Number(currentTime)) ? Number(currentTime) : 0;
+
+    const firstAfterCursor = segments.findIndex(seg => seg.start >= cursor);
+    if (firstAfterCursor >= 0) {
+      return firstAfterCursor;
+    }
+
+    return 0;
+  };
+
   const togglePlayback = () => {
     const segments = normalizeSegments(selectedSegments || []);
 
@@ -259,11 +270,15 @@ export default function AudioEditor({ episode, onClose, onSave }) {
       return;
     }
 
-    // If user has selected regions, play them sequentially
+    // If the cursor sits outside any selected region, treat the cursor as
+    // the desired preview origin and start from the first selected region
+    // whose start is at or after that cursor. This lets playback begin from
+    // the current waveform point instead of forcing the earliest region.
     if (segments.length > 0) {
+      const startIndex = playbackStartIndexForCursor(segments);
       playQueueRef.current = segments;
-      playIndexRef.current = 0;
-      playSegmentAtIndex(0);
+      playIndexRef.current = startIndex;
+      playSegmentAtIndex(startIndex);
       return;
     }
 
@@ -465,16 +480,31 @@ export default function AudioEditor({ episode, onClose, onSave }) {
   };
 
   const refreshWaveformAfterTrim = () => {
-    const ws = wavesurferRef.current;
-    if (!ws) return;
+    const oldWs = wavesurferRef.current;
+    if (oldWs) {
+      try {
+        if (oldWs.__dragSelectionCleanup) oldWs.__dragSelectionCleanup();
+      } catch {}
+      try {
+        oldWs.stop();
+      } catch {}
+      try {
+        oldWs.destroy();
+      } catch {}
+    }
 
+    wavesurferRef.current = null;
+    regionsPluginRef.current = null;
     clearSelection();
     setIsWaveformLoading(true);
+
     const refreshUrl = buildAudioUrl(true);
     try {
-      ws.load(refreshUrl);
+      const freshWs = createWaveSurfer(refreshUrl);
+      wavesurferRef.current = freshWs;
     } catch (e) {
       console.error('[AudioEditor] Refresh load failed:', e);
+      setIsWaveformLoading(false);
     }
   };
 
